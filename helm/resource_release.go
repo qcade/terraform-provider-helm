@@ -3,6 +3,7 @@ package helm
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -316,7 +317,7 @@ func resourceReleaseCreate(d *schema.ResourceData, meta interface{}) error {
 	return setIDAndMetadataFromRelease(d, res.Release)
 }
 
-func resourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
+func realResourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
 	m := meta.(*Meta)
 	c, err := m.GetHelmClient()
 	if err != nil {
@@ -333,6 +334,27 @@ func resourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
 	//  d.Set("values_source_detected_md5", d.Get("values_sources_md5"))
 
 	return setIDAndMetadataFromRelease(d, r)
+}
+
+func resourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
+	var err error
+	for i := 0; i < 30; i++ {
+		err = realResourceReleaseRead(d, meta)
+		if err == nil {
+			break
+		} else {
+			m := meta.(*Meta)
+			m.Settings.TillerHost = ""
+			ioutil.WriteFile(fmt.Sprintf("/tmp/dat2-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%d][%s] Read: %#+v => ConnInfo: %#+v\n", i, d.Get("name").(string), err, d.ConnInfo())), 0644)
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	if err != nil {
+		ioutil.WriteFile(fmt.Sprintf("/tmp/dat2-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%s] FailRead: %#+v\n", d.Get("name").(string), err)), 0644)
+	}
+
+	return err
 }
 
 func setIDAndMetadataFromRelease(d *schema.ResourceData, r *release.Release) error {
@@ -406,7 +428,7 @@ func resourceReleaseDelete(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
-func resourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, error) {
+func realResourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, error) {
 	m := meta.(*Meta)
 	c, err := m.GetHelmClient()
 	if err != nil {
@@ -423,6 +445,28 @@ func resourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, erro
 	}
 
 	return false, err
+}
+
+func resourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, error) {
+	var err error
+	var res bool
+	for i := 0; i < 10; i++ {
+		res, err = realResourceReleaseExists(d, meta)
+		if err == nil {
+			break
+		} else {
+			m := meta.(*Meta)
+			m.Settings.TillerHost = ""
+			ioutil.WriteFile(fmt.Sprintf("/tmp/dat3-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%d][%s] Exists: %#+v => ConnInfo: %#+v\n", i, d.Get("name").(string), err, d.ConnInfo())), 0644)
+			time.Sleep(3 * time.Second)
+		}
+	}
+
+	if err != nil {
+		ioutil.WriteFile(fmt.Sprintf("/tmp/dat3-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%s] FailExists: %#+v\n", d.Get("name").(string), err)), 0644)
+	}
+
+	return res, err
 }
 
 func deleteRelease(c helm.Interface, name string, disableWebhooks bool, timeout int64) error {
