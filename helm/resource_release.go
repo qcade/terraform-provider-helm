@@ -3,7 +3,6 @@ package helm
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -366,20 +365,15 @@ func realResourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
 
 func resourceReleaseRead(d *schema.ResourceData, meta interface{}) error {
 	var err error
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 10; i++ {
 		err = realResourceReleaseRead(d, meta)
 		if err == nil {
 			break
 		} else {
 			m := meta.(*Meta)
-			m.Settings.TillerHost = ""
-			ioutil.WriteFile(fmt.Sprintf("/tmp/dat2-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%d][%s] Read: %#+v => ConnInfo: %#+v\n", i, d.Get("name").(string), err, d.ConnInfo())), 0644)
-			time.Sleep(1 * time.Second)
+			m.Settings.TillerHost = "" // Forces tunnel to reconnect
+			time.Sleep(3 * time.Second)
 		}
-	}
-
-	if err != nil {
-		ioutil.WriteFile(fmt.Sprintf("/tmp/dat2-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%s] FailRead: %#+v\n", d.Get("name").(string), err)), 0644)
 	}
 
 	return err
@@ -484,14 +478,9 @@ func resourceReleaseExists(d *schema.ResourceData, meta interface{}) (bool, erro
 			break
 		} else {
 			m := meta.(*Meta)
-			m.Settings.TillerHost = ""
-			ioutil.WriteFile(fmt.Sprintf("/tmp/dat3-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%d][%s] Exists: %#+v => ConnInfo: %#+v\n", i, d.Get("name").(string), err, d.ConnInfo())), 0644)
+			m.Settings.TillerHost = "" // Forces tunnel to reconnect
 			time.Sleep(3 * time.Second)
 		}
-	}
-
-	if err != nil {
-		ioutil.WriteFile(fmt.Sprintf("/tmp/dat3-%s", d.Get("name").(string)), []byte(fmt.Sprintf("[%s] FailExists: %#+v\n", d.Get("name").(string), err)), 0644)
 	}
 
 	return res, err
