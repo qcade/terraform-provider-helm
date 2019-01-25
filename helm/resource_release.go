@@ -89,6 +89,24 @@ func resourceRelease() *schema.Resource {
 					},
 				},
 			},
+			"set_sensitive": {
+				Type:        schema.TypeSet,
+				Optional:    true,
+				Description: "Custom sensitive values to be merge with the values.",
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"name": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"value": {
+							Type:      schema.TypeString,
+							Required:  true,
+							Sensitive: true,
+						},
+					},
+				},
+			},
 			"set_string": {
 				Type:        schema.TypeSet,
 				Optional:    true,
@@ -167,6 +185,11 @@ func resourceRelease() *schema.Resource {
 				Default:     true,
 				Description: "Will wait until all resources are in a ready state before marking the release as successful.",
 			},
+			"status": {
+				Type:        schema.TypeString,
+				Computed:    true,
+				Description: "Status of the release.",
+			},
 			"metadata": {
 				Type:        schema.TypeSet,
 				Computed:    true,
@@ -187,11 +210,6 @@ func resourceRelease() *schema.Resource {
 							Type:        schema.TypeString,
 							Computed:    true,
 							Description: "Namespace is the kubernetes namespace of the release.",
-						},
-						"status": {
-							Type:        schema.TypeString,
-							Computed:    true,
-							Description: "Status of the release.",
 						},
 						"chart": {
 							Type:        schema.TypeString,
@@ -270,11 +288,21 @@ func prepareTillerForNewRelease(d *schema.ResourceData, c helm.Interface, name s
 }
 
 func resourceDiff(d *schema.ResourceDiff, meta interface{}) error {
-	c, _, err := getChart(d, meta.(*Meta))
-	if err == nil {
-		return d.SetNew("version", c.Metadata.Version)
+
+	// Always set desired state to be DEPLOYED
+	err := d.SetNew("status", release.Status_DEPLOYED.String())
+	if err != nil {
+		return err
 	}
-	return nil
+
+	// Get Chart metadata, if we fail - we're done
+	c, _, err := getChart(d, meta.(*Meta))
+	if err != nil {
+		return nil
+	}
+
+	// Set desired version from the Chart metadata
+	return d.SetNew("version", c.Metadata.Version)
 }
 
 func resourceReleaseCreate(d *schema.ResourceData, meta interface{}) error {
@@ -361,12 +389,12 @@ func setIDAndMetadataFromRelease(d *schema.ResourceData, r *release.Release) err
 	d.SetId(r.Name)
 	d.Set("version", r.Chart.Metadata.Version)
 	d.Set("namespace", r.Namespace)
+	d.Set("status", r.Info.Status.Code.String())
 
 	return d.Set("metadata", []map[string]interface{}{{
 		"name":      r.Name,
 		"revision":  r.Version,
 		"namespace": r.Namespace,
-		"status":    r.Info.Status.Code.String(),
 		"chart":     r.Chart.Metadata.Name,
 		"version":   r.Chart.Metadata.Version,
 		"values":    r.Config.Raw,
@@ -588,6 +616,17 @@ func getValues(d *schema.ResourceData) ([]byte, error) {
 		}
 	}
 
+	for _, raw := range d.Get("set_sensitive").(*schema.Set).List() {
+		set := raw.(map[string]interface{})
+
+		name := set["name"].(string)
+		value := set["value"].(string)
+
+		if err := strvals.ParseInto(fmt.Sprintf("%s=%s", name, value), base); err != nil {
+			return nil, fmt.Errorf("failed parsing key %q with sensitive value, %s", name, err)
+		}
+	}
+
 	for _, raw := range d.Get("set_string").(*schema.Set).List() {
 		set := raw.(map[string]interface{})
 
@@ -601,7 +640,13 @@ func getValues(d *schema.ResourceData) ([]byte, error) {
 
 	yaml, err := yaml.Marshal(base)
 	if err == nil {
-		log.Printf("---[ values.yaml ]-----------------------------------\n%s\n", yaml)
+		yamlString := string(yaml)
+		for _, raw := range d.Get("set_sensitive").(*schema.Set).List() {
+			set := raw.(map[string]interface{})
+			yamlString = strings.Replace(yamlString, set["value"].(string), "<SENSITIVE>", -1)
+		}
+
+		log.Printf("---[ values.yaml ]-----------------------------------\n%s\n", yamlString)
 	}
 
 	return yaml, err
